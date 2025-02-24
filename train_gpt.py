@@ -200,6 +200,7 @@ class Muon(torch.optim.Optimizer):
                     g = update_buffer_views[self.rank]
                 if base_i > 0:
                     update_prev() # async all_gather instead of sync all_reduce by @YouJiacheng
+                    
                 handle = dist.all_gather_into_tensor(update_buffer, g, async_op=True)
                 params_world = params[base_i : base_i + self.world_size]
             update_prev()
@@ -464,6 +465,7 @@ class Hyperparameters:
     beta2: float = 0.95  
     use_momentum_sched: bool = False 
     muon_momentum_warmup: bool = True     
+    single_gpu: bool = True
     
     
 from transformers import HfArgumentParser
@@ -492,7 +494,7 @@ print(f"[rank {rank}] device={device}. world_size={world_size}.")
 torch.cuda.set_device(device)
 
 # Only initialize distributed backend if world_size > 1
-distributed_mode = world_size > 1
+distributed_mode = not args.single_gpu
 if distributed_mode:
     dist.init_process_group(backend="nccl", device_id=device)
     dist.barrier()
