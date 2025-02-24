@@ -19,7 +19,7 @@ import torch.distributed as dist
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
 #torch._inductor.config.coordinate_descent_tuning = True # we have banned this flag for new records because it causes compilation to take 30min
 
-torch._inductor.config.max_autotune_gemm_backends = "ATEN,TRITON,CUDA"
+
 torch.empty(1, device="cuda", requires_grad=True).backward() # prevents a bug on some systems
 
 # -----------------------------------------------------------------------------
@@ -456,17 +456,27 @@ class Hyperparameters:
     # evaluation and logging
     val_loss_every: int = 125 # every how many steps to evaluate val loss? 0 for only at the end
     save_checkpoint: bool = False
-    gpu: int = None 
-
+    wandb: bool = False
+    # optimizer setup
+    lr: float = 0.05  # this is the default for muon
+    optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
+    beta1: float = 0.9  # momentum 
+    beta2: float = 0.95  
+    use_momentum_sched: bool = False 
+    muon_momentum_warmup: bool = True     
+    
+    
 from transformers import HfArgumentParser
 # Parse arguments from the command line
 parser = HfArgumentParser(Hyperparameters)
-args, rem = parser.parse_args_into_dataclasses(return_remaining_strings=True)
+parsed_results = parser.parse_args_into_dataclasses(return_remaining_strings=True)
+args: Hyperparameters = parsed_results[0]
+rem = parsed_results[1]
 assert len(rem) == 0, f"Unrecognized args: {rem}"
 
 # torchrun sets these env variables
-rank = int(os.environ["RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
+rank = int(os.environ.get("RANK", "0"))
+world_size = int(os.environ.get("WORLD_SIZE", "1"))
 # assert world_size == 8 # this code is designed for 8xH100
 # changes for running on 2x4090
 desired_world_size = 8
@@ -477,12 +487,15 @@ args.val_seq_len = 32 * 1024
 gradient_accumulation_steps = (original_seq_len * world_size_factor) // args.train_seq_len
 
 assert torch.cuda.is_available()
-gpu_id = int(os.environ["LOCAL_RANK"]) if args.gpu is None else args.gpu
-device = torch.device("cuda", gpu_id)
+device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
 print(f"[rank {rank}] device={device}. world_size={world_size}.")
 torch.cuda.set_device(device)
-dist.init_process_group(backend="nccl", device_id=device)
-dist.barrier()
+
+# Only initialize distributed backend if world_size > 1
+distributed_mode = world_size > 1
+if distributed_mode:
+    dist.init_process_group(backend="nccl", device_id=device)
+    dist.barrier()
 master_process = (rank == 0) # this process will do logging, checkpointing etc.
 
 # begin logging
@@ -499,6 +512,23 @@ def print0(s, console=False):
                 print(s)
             print(s, file=f)
 
+# wandb for remote logging
+import wandb
+if args.wandb and master_process:
+    # Create base run name from optimizer and learning rate
+    run_name = f"{args.optimizer}-lr{args.lr}"
+    
+    # Add non-default parameters to run name
+    if args.beta1 != 0.9:
+        run_name += f"-b1{args.beta1}"
+    if args.beta2 != 0.95:
+        run_name += f"-b2{args.beta2}"
+    if args.use_momentum_sched:
+        run_name += "msched"
+    
+    wandb.init(project="nanogpt-speedrun", name=run_name)
+    wandb.config.update(args)  # This tracks your hyperparameters
+    
 # begin by printing this file (the Python code)
 print0(code)
 print0("="*100)
@@ -521,7 +551,8 @@ for m in model.modules():
     if isinstance(m, nn.Embedding):
         m.bfloat16()
 for param in model.parameters():
-    dist.broadcast(param.detach(), 0)
+    if distributed_mode:
+        dist.broadcast(param.detach(), 0)
 
 print("Constructing optimizers")
 # collect the parameters to optimize
@@ -535,7 +566,16 @@ adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
 optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
-optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
+if args.optimizer == 'muon':
+    optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
+elif args.optimizer == 'adam':
+    optimizer2 = torch.optim.Adam(hidden_matrix_params, lr=args.lr, betas=(args.beta1, args.beta2))
+elif args.optimizer == "adamw_sn":
+    from adamw_sn import AdamWSN
+    optimizer2 = AdamWSN(hidden_matrix_params, lr=args.lr, betas=(args.beta1, args.beta2), eps=1e-6)
+else:
+    raise NotImplementedError
+
 optimizers = [optimizer1, optimizer2]
 for opt in optimizers:
     for group in opt.param_groups:
@@ -575,11 +615,10 @@ initial_state = dict(model=copy.deepcopy(model.state_dict()),
         optimizers=[copy.deepcopy(opt.state_dict()) for opt in optimizers]) # save the initial state
 for _ in range(warmup_steps):
     inputs = targets = torch.randint(0, args.vocab_size, size=(args.train_seq_len,), device=device)
-    print("inputs", inputs.shape, inputs.dtype, inputs.device)
-    print("targets", targets.shape, targets.dtype, targets.device)
     model(inputs.to(torch.int32), targets, get_window_size_blocks(0)).backward()
-    for param in model.parameters():
-        dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
+    if distributed_mode:
+        for param in model.parameters():
+            dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
@@ -599,6 +638,7 @@ torch.cuda.synchronize()
 t0 = time.perf_counter()
 # begin training
 train_steps = args.num_iterations
+
 for step in range(train_steps + 1):
     last_step = (step == train_steps)
 
@@ -619,8 +659,17 @@ for step in range(train_steps + 1):
                 val_loss += model(inputs, targets, get_window_size_blocks(step))
         val_loss /= val_steps
         del val_loader
-        dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
+        if distributed_mode:
+            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
         print0(f"step:{step}/{train_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/max(step, 1):.2f}ms", console=True)
+        if args.wandb and master_process:
+            wandb.log({
+                "val_loss": val_loss.item(),
+                "training_time_ms": training_time_ms,
+                "step_time_ms": training_time_ms/max(step, 1),
+                "step": step
+            })
+            
         model.train()
         # start the clock again
         torch.cuda.synchronize()
@@ -631,24 +680,33 @@ for step in range(train_steps + 1):
             log = dict(step=step, code=code, model=model.state_dict(), optimizers=[opt.state_dict() for opt in optimizers])
             os.makedirs(f"logs/{run_id}", exist_ok=True)
             torch.save(log, f"logs/{run_id}/state_step{step:06d}.pt")
+            
         # the last step only has the validation loop, so break to avoid training
         break
 
     # --------------- TRAINING SECTION -----------------
+    avg_loss = 0  # for logging purposes
     for _ in range(gradient_accumulation_steps):
         inputs, targets = next(train_loader)
         loss = model(inputs, targets, get_window_size_blocks(step))
         loss = loss / gradient_accumulation_steps
+        avg_loss += loss.item()
         loss.backward()
-    for param in model.parameters():
-        dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
+    if distributed_mode:
+        for param in model.parameters():
+            dist.all_reduce(param.grad, op=dist.ReduceOp.AVG)
     # set optimization hyperparameters
     for opt in optimizers:
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * get_lr(step)
-    for group in optimizer2.param_groups:
-        frac = min(step / 300, 1) # momentum warmup for muon
-        group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
+    if args.muon_momentum_warmup and args.optimizer == 'muon':
+        for group in optimizer2.param_groups:
+            frac = min(step / 300, 1) # momentum warmup for muon
+            group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
+    elif args.use_momentum_sched:
+        for group in optimizer2.param_groups:
+            frac = min(step / 300, 1) # momentum warmup for muon
+            group["betas"] = (1 - frac) * 0.85 + frac * 0.95, group["betas"][1]
     # step the optimizers
     for opt in optimizers:
         opt.step()
@@ -656,8 +714,28 @@ for step in range(train_steps + 1):
     model.zero_grad(set_to_none=True)
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
-    print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms/(step + 1):.2f}ms", console=True)
+    avg_step_time = approx_training_time_ms/(step + 1)
+    remaining_steps = train_steps - (step + 1)
+    eta_minutes = (remaining_steps * avg_step_time) / (1000 * 60)  # convert ms to minutes
+    print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{avg_step_time:.2f}ms eta:{eta_minutes:.1f}min", console=True)
+    if args.wandb and master_process:
+        wandb.log({
+            "train_loss": avg_loss,
+            "learning_rate": optimizer2.param_groups[0]["lr"],
+            "step": step + 1,
+            "approx_training_time_ms": approx_training_time_ms,
+            "step_time_ms": avg_step_time
+        })
 
 print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB", console=True)
-dist.destroy_process_group()
+
+if args.wandb and master_process:
+    wandb.log({
+        "peak_memory_allocated_mb": torch.cuda.max_memory_allocated() // 1024 // 1024,
+        "peak_memory_reserved_mb": torch.cuda.max_memory_reserved() // 1024 // 1024
+    })
+    wandb.finish()
+    
+if distributed_mode:
+    dist.destroy_process_group()
