@@ -537,13 +537,17 @@ if args.wandb and master_process:
         sched_str += f"to{args.final_rate}"
     else:
         sched_str = ""
-    run_name = f"{args.optimizer}-{sched_str}lr{args.lr}"
+    optstr = f"{args.optimizer}"
+    if args.optimizer == "adamw_snsm":
+        optstr += f"r{args.rank}g{args.update_proj_gap}"
+        
+    run_name = f"{optstr}-{sched_str}lr{args.lr}"
     
     # Add non-default parameters to run name
     if args.beta1 != 0.9:
-        run_name += f"-b1{args.beta1}"
+        run_name += f"b1{args.beta1}"
     if args.beta2 != 0.95:
-        run_name += f"-b2{args.beta2}"
+        run_name += f"b2{args.beta2}"
     if args.use_momentum_sched:
         run_name += "msched"
     
