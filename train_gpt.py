@@ -459,8 +459,11 @@ class Hyperparameters:
     save_checkpoint: bool = False
     wandb: bool = False
     # optimizer setup
-    lr: float = 0.05  # this is the default for muon
+    lr: float = 0.05  # this is the default for muon 
+    head_lr: float = 0.22  # this lr is just for the head
+    embed_lr: float = 0.6  # just for the embed params
     opt1: str = "adam"  # choices = ['adam', 'adamw_sn']
+    train_head_on_opt2: bool = False  # set this to True to train head on opt2
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
     beta1: float = 0.9  # momentum 
     beta2: float = 0.95  
@@ -532,23 +535,26 @@ if __name__ == "__main__":
     import wandb
     if args.wandb and master_process:
         # Create base run name from optimizer and learning rate
+        opt1_str = f"opt1{args.opt1}hlr{args.head_lr}elr{args.embed_lr}:" if args.opt1 != "adam" else ""
+        optstr = f"{opt1_str}{args.optimizer}"
+        optstr += 'TH' if args.train_head_on_opt2 else ""
+            
+        if args.optimizer == "adamw_snsm":
+            optstr += f"r{args.rank}g{args.update_proj_gap}"
+            
         if args.scheduler != "default":
             sched_str = f"{args.scheduler}" 
             sched_str += f"{args.warmup}" if args.warmup > 0 else ""
             sched_str += f"to{args.final_rate}"
         else:
             sched_str = ""
-        optstr = f"{args.optimizer}"
-        if args.optimizer == "adamw_snsm":
-            optstr += f"r{args.rank}g{args.update_proj_gap}"
-            
         run_name = f"{optstr}-{sched_str}lr{args.lr}"
         
         # Add non-default parameters to run name
         if args.beta1 != 0.9:
-            run_name += f"b1{args.beta1}"
+            run_name += f"bI{args.beta1}"
         if args.beta2 != 0.95:
-            run_name += f"b2{args.beta2}"
+            run_name += f"bII{args.beta2}"
         if args.use_momentum_sched:
             run_name += "msched"
         
@@ -585,18 +591,22 @@ if __name__ == "__main__":
     hidden_matrix_params = [p for n, p in model.blocks.named_parameters() if p.ndim >= 2 and "embed" not in n]
     embed_params = [p for n, p in model.named_parameters() if "embed" in n]
     scalar_params = [p for p in model.parameters() if p.ndim < 2]
-    head_params = [model.lm_head.weight]
-
+    if args.train_head_on_opt2:
+        hidden_matrix_params.append(model.lm_head.weight)
+        adam_params = [dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
+    else:
+        head_params = [model.lm_head.weight]
+        adam_params = [dict(params=head_params, lr=args.head_lr),  # default for head_lr is .22
+                    dict(params=embed_params, lr=args.embed_lr),  # default is 0.6 
+                    dict(params=scalar_params, lr=0.04)]
     # init the optimizer(s)
     if args.opt1 == "adam":
-        adam_params = [dict(params=head_params, lr=0.22), 
-                    dict(params=embed_params, lr=0.6), 
-                    dict(params=scalar_params, lr=0.04)]
         # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
         # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
         optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
     elif args.opt1 == "adamw_sn":
-        optimizer1 = AdamWSN(head_params+embed_params+scalar_params, lr=args.lr, betas=(args.beta1, args.beta2), eps=1e-10)
+        from adamw_sn import AdamWSN
+        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10)
     else:
         raise NotImplementedError
 
