@@ -606,7 +606,7 @@ def linear_lr(step: int):
     warmup from 0 to max_lr and decay to target
     """
     if step > args.warmup:
-        x = (step - args.warmup) / args.num_iterations
+        x = (step - args.warmup) / (args.num_iterations- args.warmup)
         w = (1 - x) / args.cooldown_frac
         return w * 1.0 + (1 - w) * 0.1
     else:
