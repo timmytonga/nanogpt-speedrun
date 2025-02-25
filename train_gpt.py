@@ -460,6 +460,7 @@ class Hyperparameters:
     wandb: bool = False
     # optimizer setup
     lr: float = 0.05  # this is the default for muon
+    opt1: str = "adam"  # choices = ['adam', 'adamw_sn']
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
     beta1: float = 0.9  # momentum 
     beta2: float = 0.95  
@@ -469,8 +470,16 @@ class Hyperparameters:
     # scheduler
     scheduler: str = "default"  # choices: ['linear', 'default']. default is "constant then decay".
     warmup: int = 0  # specify the number of warmup steps
+    final_rate: float = 0.1  # final lr decay fraction
+    # adamw_snsm args
+    rank: int = 256
+    update_proj_gap: int = 200
     
     
+
+########################################
+#    Setup args and logging            #
+########################################
 from transformers import HfArgumentParser
 # Parse arguments from the command line
 parser = HfArgumentParser(Hyperparameters)
@@ -522,8 +531,12 @@ def print0(s, console=False):
 import wandb
 if args.wandb and master_process:
     # Create base run name from optimizer and learning rate
-    sched_str = f"{args.scheduler}" if args.scheduler != "default" else ""
-    sched_str += f"{args.warmup}" if args.warmup > 0 else ""
+    if args.scheduler != "default":
+        sched_str = f"{args.scheduler}" 
+        sched_str += f"{args.warmup}" if args.warmup > 0 else ""
+        sched_str += f"to{args.final_rate}"
+    else:
+        sched_str = ""
     run_name = f"{args.optimizer}-{sched_str}lr{args.lr}"
     
     # Add non-default parameters to run name
@@ -570,12 +583,18 @@ scalar_params = [p for p in model.parameters() if p.ndim < 2]
 head_params = [model.lm_head.weight]
 
 # init the optimizer(s)
-adam_params = [dict(params=head_params, lr=0.22), 
-               dict(params=embed_params, lr=0.6), 
-               dict(params=scalar_params, lr=0.04)]
-# small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
-# discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
-optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+if args.opt1 == "adam":
+    adam_params = [dict(params=head_params, lr=0.22), 
+                dict(params=embed_params, lr=0.6), 
+                dict(params=scalar_params, lr=0.04)]
+    # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
+    # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
+    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
+elif args.opt1 == "adamw_sn":
+    optimizer1 = AdamWSN(head_params+embed_params+scalar_params, lr=args.lr, betas=(args.beta1, args.beta2), eps=1e-10)
+else:
+    raise NotImplementedError
+
 if args.optimizer == 'muon':
     optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
 elif args.optimizer == 'adam':
@@ -583,6 +602,10 @@ elif args.optimizer == 'adam':
 elif args.optimizer == "adamw_sn":
     from adamw_sn import AdamWSN
     optimizer2 = AdamWSN(hidden_matrix_params, lr=args.lr, betas=(args.beta1, args.beta2), eps=1e-6)
+elif args.optimizer == "adamw_snsm":
+    from adamw_snsm import AdamwSNSM
+    optimizer2 = AdamwSNSM(hidden_matrix_params, lr=args.lr, betas=(args.beta1, args.beta2), eps=1e-6,
+                           rank=args.rank, update_proj_gap=args.update_proj_gap)
 else:
     raise NotImplementedError
 
@@ -607,8 +630,8 @@ def linear_lr(step: int):
     """
     if step > args.warmup:
         x = (step - args.warmup) / (args.num_iterations- args.warmup)
-        w = (1 - x) / args.cooldown_frac
-        return w * 1.0 + (1 - w) * 0.1
+        w = (1 - x) 
+        return w * 1.0 + (1 - w) * args.final_rate
     else:
         x = step / args.warmup
         return x * 1.0
