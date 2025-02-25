@@ -466,6 +466,9 @@ class Hyperparameters:
     use_momentum_sched: bool = False 
     muon_momentum_warmup: bool = True     
     single_gpu: bool = True
+    # scheduler
+    scheduler: str = "default"  # choices: ['linear', 'default']. default is "constant then decay".
+    warmup: int = 0  # specify the number of warmup steps
     
     
 from transformers import HfArgumentParser
@@ -475,6 +478,7 @@ parsed_results = parser.parse_args_into_dataclasses(return_remaining_strings=Tru
 args: Hyperparameters = parsed_results[0]
 rem = parsed_results[1]
 assert len(rem) == 0, f"Unrecognized args: {rem}"
+assert args.warmup >= 0, f"warmup must be >= 0."
 
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
@@ -518,7 +522,9 @@ def print0(s, console=False):
 import wandb
 if args.wandb and master_process:
     # Create base run name from optimizer and learning rate
-    run_name = f"{args.optimizer}-lr{args.lr}"
+    sched_str = f"{args.scheduler}" if args.scheduler != "default" else ""
+    sched_str += f"{args.warmup}" if args.warmup > 0 else ""
+    run_name = f"{args.optimizer}-{sched_str}lr{args.lr}"
     
     # Add non-default parameters to run name
     if args.beta1 != 0.9:
@@ -564,7 +570,9 @@ scalar_params = [p for p in model.parameters() if p.ndim < 2]
 head_params = [model.lm_head.weight]
 
 # init the optimizer(s)
-adam_params = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
+adam_params = [dict(params=head_params, lr=0.22), 
+               dict(params=embed_params, lr=0.6), 
+               dict(params=scalar_params, lr=0.04)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
 optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
@@ -584,7 +592,7 @@ for opt in optimizers:
         group["initial_lr"] = group["lr"]
 
 # learning rate schedule: stable then decay
-def get_lr(step: int):
+def default_lr(step: int):
     x = step / args.num_iterations # progress in training
     assert 0 <= x < 1
     if x < 1 - args.cooldown_frac:
@@ -593,6 +601,26 @@ def get_lr(step: int):
         w = (1 - x) / args.cooldown_frac
         return w * 1.0 + (1 - w) * 0.1
 
+def linear_lr(step: int):
+    """
+    warmup from 0 to max_lr and decay to target
+    """
+    if step > args.warmup:
+        x = (step - args.warmup) / args.num_iterations
+        w = (1 - x) / args.cooldown_frac
+        return w * 1.0 + (1 - w) * 0.1
+    else:
+        x = step / args.warmup
+        return x * 1.0
+
+
+if args.scheduler == "default":
+    get_lr = default_lr
+elif args.scheduler == "linear":
+    get_lr = linear_lr
+else:
+    raise NotImplementedError
+    
 # attention window size schedule: linearly increase
 @lru_cache(1)
 def get_window_size_blocks_helper(window_size: int):
