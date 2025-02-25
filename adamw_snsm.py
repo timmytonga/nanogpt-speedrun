@@ -79,13 +79,11 @@ class AdamwSNSM(Optimizer):
                     state["step"] = 0
 
                 # subset-norm for compressing adaptive step size second moment term
-                if "reduce_dim" in group and "reduce_dim" not in state:
-                    state["reduce_dim"] = 0 if grad.shape[0] >= grad.shape[1] else 1
-                if "reduce_dim" in group:  # this means we are reducing the min dir
-                    norm_dim = 1 - state["reduce_dim"]
-                    update_grad = torch.sum(grad**2, dim=norm_dim, keepdim=True)
-                else:
-                    update_grad = grad**2
+                if "reduce_dim" not in state:
+                    state["reduce_dim"] = -1 if grad.shape[-2] >= grad.shape[-1] else -2
+                
+                update_grad = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
+
 
                 # Projection for compressing momentum term
                 if "projector" not in state:

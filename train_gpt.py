@@ -512,7 +512,7 @@ if __name__ == "__main__":
     torch.cuda.set_device(device)
 
     # Only initialize distributed backend if world_size > 1
-    distributed_mode = not args.single_gpu
+    distributed_mode = not args.single_gpu or world_size > 1
     if distributed_mode:
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()

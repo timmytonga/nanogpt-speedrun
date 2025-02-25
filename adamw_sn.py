@@ -56,6 +56,7 @@ class AdamWSN(Optimizer):
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
 
+
     @torch.no_grad()
     def step(self, closure: Callable = None):
         """
@@ -80,14 +81,14 @@ class AdamWSN(Optimizer):
 
                 if "step" not in state:
                     state["step"] = 0
-                if "sn" in group and "reduce_dim" not in state:
-                    state["reduce_dim"] = 0 if grad.shape[0] >= grad.shape[1] else 1
+                if "reduce_dim" not in state:
+                    if grad.ndim == 1:
+                        state["reduce_dim"] = 0
+                    else:
+                        state["reduce_dim"] = -1 if grad.shape[-2] >= grad.shape[-1] else -2
 
                 # Subset Norm
-                if "sn" in group:
-                    second_moment_update = torch.sum(grad**2, dim=(1 - state["reduce_dim"]), keepdim=True)
-                else:
-                    second_moment_update = grad**2
+                second_moment_update = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
 
                 beta1, beta2 = group["betas"]
 
