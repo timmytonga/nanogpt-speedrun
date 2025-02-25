@@ -101,7 +101,7 @@ class AdamwSNSM(Optimizer):
                     state["exp_avg_sq"] = torch.zeros_like(update_grad)
 
                 # reset exp_avg state when we update
-                if ("rank" in group and state["step"] > 1 and state["step"] % self.update_proj_gap == 0):
+                if (state["step"] > 1 and state["step"] % self.update_proj_gap == 0):
                     state["exp_avg"] = torch.zeros_like(proj_grad)
 
                 # Now we are ready to update
@@ -110,13 +110,9 @@ class AdamwSNSM(Optimizer):
                 state["step"] += 1
 
                 # Momentum term
-                if "rank" in group:
-                    exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
-                    orth_comp = grad - state["projector"].project_back(proj_grad)
-                    numerator = state["projector"].project_back(exp_avg) + orth_comp
-                else:
-                    exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
-                    numerator = exp_avg
+                exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
+                orth_comp = grad - state["projector"].project_back(proj_grad)
+                numerator = state["projector"].project_back(exp_avg) + orth_comp
 
                 # Subset-norm step size term
                 exp_avg_sq.mul_(beta2).add_(update_grad, alpha=1.0 - beta2)
@@ -138,6 +134,20 @@ class AdamwSNSM(Optimizer):
 
 # svd decomposition
 def get_orthogonal_matrix(weights, rank, type):
+    if weights.dim() == 2:
+        return get_projs_2d(weights, rank, type)
+    elif weights.dim() == 3:
+        # this is batched version 
+        result = []
+        for i in range(weights.dim()):
+            result.append(get_projs_2d(weights[i], rank, type))
+        return torch.stack(result, dim=0)
+    else:
+        raise NotImplementedError("Only support 2D matrix and 3D batched of 2D matrices for now")
+
+
+def get_projs_2d(weights, rank, type) -> torch.Tensor:
+    assert weights.dim() == 2, "This only works for 2D params"
     module_params = weights
 
     if module_params.data.dtype != torch.float:
@@ -163,12 +173,13 @@ def get_orthogonal_matrix(weights, rank, type):
             A = A.to(original_device).type(original_type)
         return A
     elif type=='full':
-        A = U[:, :rank]
-        B = Vh[:rank, :]
-        if not float_data:
-            A = A.to(original_device).type(original_type)
-            B = B.to(original_device).type(original_type)
-        return [A, B]
+        raise NotImplementedError("Does not support full for now")
+        # A = U[:, :rank]
+        # B = Vh[:rank, :]
+        # if not float_data:
+        #     A = A.to(original_device).type(original_type)
+        #     B = B.to(original_device).type(original_type)
+        # return [A, B]
     else:
         raise ValueError('type should be left, right or full')
 
@@ -183,34 +194,33 @@ class SVDProjector:
         self.update_proj_gap = update_proj_gap
         self.ortho_matrix = None
         self.proj_type = proj_type
-
+        self.scale = 1.0
+    
     def project(self, full_rank_grad: torch.Tensor, n_iter):
+        num_rows, num_cols = full_rank_grad.shape[-2], full_rank_grad.shape[-1]
+        
         if self.proj_type == 'svd':  # this is SVD
-            if full_rank_grad.shape[0] >= full_rank_grad.shape[1]:
+            if num_rows >= num_cols:
                 if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
                     self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, type='right')
-                low_rank_grad = torch.matmul(full_rank_grad, self.ortho_matrix.t())
+                low_rank_grad = torch.matmul(full_rank_grad, self.ortho_matrix.transpose(-1, -2))
             else:
                 if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
                     self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, type='left')
-                low_rank_grad = torch.matmul(self.ortho_matrix.t(), full_rank_grad)
-        elif self.proj_type == 'svd_full':  # this is SVD
-            if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
-                self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, type='full')
-            low_rank_grad = torch.matmul(self.ortho_matrix[0].t(), full_rank_grad) @ self.ortho_matrix[1].t()
+                low_rank_grad = torch.matmul(self.ortho_matrix.transpose(-1, -2), full_rank_grad)
         else:
             raise NotImplementedError("should not be here")
 
         return low_rank_grad
 
     def project_back(self, low_rank_grad):
+        num_rows, num_cols = low_rank_grad.shape[-2], low_rank_grad.shape[-1]
+        
         if self.proj_type == 'svd':
-            if low_rank_grad.shape[0] >= low_rank_grad.shape[1]:
+            if num_rows >= num_cols:
                 full_rank_grad = torch.matmul(low_rank_grad, self.ortho_matrix)
             else:
                 full_rank_grad = torch.matmul(self.ortho_matrix, low_rank_grad)
-        elif self.proj_type == 'svd_full':
-            full_rank_grad = torch.matmul(self.ortho_matrix[0], low_rank_grad) @ self.ortho_matrix[1]
         else:
             raise NotImplementedError("should not be here")
 
