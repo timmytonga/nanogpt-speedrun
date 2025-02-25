@@ -137,7 +137,7 @@ class AdamwSNSM(Optimizer):
         return loss
 
 # svd decomposition
-def get_orthogonal_matrix(weights, rank, proj_type):
+def get_orthogonal_matrix(weights, rank, type):
     module_params = weights
 
     if module_params.data.dtype != torch.float:
@@ -146,27 +146,23 @@ def get_orthogonal_matrix(weights, rank, proj_type):
         original_device = module_params.data.device
         matrix = module_params.data.float()
     else:
-        original_type, original_device = NotImplementedError, NotImplementedError
         float_data = True
         matrix = module_params.data
 
-    U, s, Vh = torch.linalg.svd(matrix, full_matrices=False)
+    U, s, Vh = torch.linalg.svd(matrix, full_matrices = False)
 
-    # make the smaller matrix always to be orthogonal matrix
-    if proj_type == 'right':
-        U[:, :rank] @ torch.diag(s[:rank])
+    #make the smaller matrix always to be orthogonal matrix
+    if type=='right':
         B = Vh[:rank, :]
-
         if not float_data:
             B = B.to(original_device).type(original_type)
         return B
-    elif proj_type == 'left':
+    elif type=='left':
         A = U[:, :rank]
-        torch.diag(s[:rank]) @ Vh[:rank, :]
         if not float_data:
             A = A.to(original_device).type(original_type)
         return A
-    elif proj_type == 'full':
+    elif type=='full':
         A = U[:, :rank]
         B = Vh[:rank, :]
         if not float_data:
