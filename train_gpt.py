@@ -463,6 +463,8 @@ class Hyperparameters:
     head_lr: float = 0.22  # this lr is just for the head
     embed_lr: float = 0.6  # just for the embed params
     scalar_lr: float = 0.04  # just for scalar
+    opt1_lr_scales: float = 1.0  # scales all default adam params lr up by some factor. Useful for adamwsn
+    
     opt1: str = "adam"  # choices = ['adam', 'adamw_sn']
     train_head_on_opt2: bool = False  # set this to True to train head on opt2
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
@@ -536,8 +538,14 @@ if __name__ == "__main__":
     import wandb
     if args.wandb and master_process:
         # Create base run name from optimizer and learning rate
-        opt1_str = f"opt1{args.opt1}hlr{args.head_lr}elr{args.embed_lr}slr{args.scalar_lr}:" \
-            if args.opt1 != "adam" else ""
+        if args.opt1 != "adam":
+            opt1_str = f"opt1{args.opt1}" 
+            if args.opt1_lr_scales == 1:
+                opt1_str += f"hlr{args.head_lr}elr{args.embed_lr}slr{args.scalar_lr}:"
+            else:
+                opt1_str += f"lrs{args.opt1_lr_scales}"
+        else:
+            opt1_str = ""
         optstr = f"{opt1_str}{args.optimizer}"
         optstr += 'TH' if args.train_head_on_opt2 else ""
             
@@ -598,9 +606,9 @@ if __name__ == "__main__":
         adam_params = [dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
     else:
         head_params = [model.lm_head.weight]
-        adam_params = [dict(params=head_params, lr=args.head_lr),  # default for head_lr is .22
-                    dict(params=embed_params, lr=args.embed_lr),  # default is 0.6 
-                    dict(params=scalar_params, lr=args.scalar_lr)]  # default is 0.04 for adam
+        adam_params = [dict(params=head_params, lr=args.head_lr*args.opt1_lr_scales),  # default for head_lr is .22
+                    dict(params=embed_params, lr=args.embed_lr*args.opt1_lr_scales),  # default is 0.6 
+                    dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales)]  # default is 0.04 for adam
     # init the optimizer(s)
     if args.opt1 == "adam":
         # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
