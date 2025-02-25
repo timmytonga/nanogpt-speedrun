@@ -188,15 +188,15 @@ class SVDProjector:
         if self.proj_type == 'svd':  # this is SVD
             if full_rank_grad.shape[0] >= full_rank_grad.shape[1]:
                 if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
-                    self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj_type='right')
+                    self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj='right')
                 low_rank_grad = torch.matmul(full_rank_grad, self.ortho_matrix.t())
             else:
                 if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
-                    self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj_type='left')
+                    self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj='left')
                 low_rank_grad = torch.matmul(self.ortho_matrix.t(), full_rank_grad)
         elif self.proj_type == 'svd_full':  # this is SVD
             if n_iter is not None and (self.ortho_matrix is None or n_iter % self.update_proj_gap == 0):
-                self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj_type='full')
+                self.ortho_matrix = get_orthogonal_matrix(full_rank_grad, self.rank, proj='full')
             low_rank_grad = torch.matmul(self.ortho_matrix[0].t(), full_rank_grad) @ self.ortho_matrix[1].t()
         else:
             raise NotImplementedError("should not be here")
