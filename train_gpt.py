@@ -135,7 +135,7 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
         X = X.mT
     return X
 
-class Muon(torch.optim.Optimizer):
+class MuonDist(torch.optim.Optimizer):
     """
     Muon - MomentUm Orthogonalized by Newton-schulz
 
@@ -200,10 +200,48 @@ class Muon(torch.optim.Optimizer):
                     g = update_buffer_views[self.rank]
                 if base_i > 0:
                     update_prev() # async all_gather instead of sync all_reduce by @YouJiacheng
-                    
+                
+                
                 handle = dist.all_gather_into_tensor(update_buffer, g, async_op=True)
                 params_world = params[base_i : base_i + self.world_size]
             update_prev()
+
+
+class MuonSingle(torch.optim.Optimizer):
+    """
+    Muon - MomentUm Orthogonalized by Newton-schulz
+    
+    Single GPU version that removes distributed training complexity.
+    """
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+        params = [*params]
+        param_groups = []
+        for size in {p.numel() for p in params}:
+            group = dict(params=[p for p in params if p.numel() == size])
+            param_groups.append(group) 
+        super().__init__(param_groups, defaults)
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            params = group["params"]
+            for p in params:
+                if p.grad is None:
+                    continue
+                    
+                g = p.grad
+                state = self.state[p]
+                
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                    
+                buf = state["momentum_buffer"]
+                buf.lerp_(g, 1 - group["momentum"])
+                g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
+                g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                
+                p.add_(g.view_as(p), alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
 
 # -----------------------------------------------------------------------------
 # PyTorch nn.Module definitions for the model
@@ -621,7 +659,10 @@ if __name__ == "__main__":
         raise NotImplementedError
 
     if args.optimizer == 'muon':
-        optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
+        if distributed_mode:
+            optimizer2 = MuonDist(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
+        else:
+            optimizer2 = MuonSingle(hidden_matrix_params, lr=0.05, momentum=0.95)
     elif args.optimizer == 'adam':
         optimizer2 = torch.optim.Adam(hidden_matrix_params, lr=args.lr, betas=(args.beta1, args.beta2))
     elif args.optimizer == "adamw_sn":
