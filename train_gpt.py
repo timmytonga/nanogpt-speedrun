@@ -654,7 +654,7 @@ if __name__ == "__main__":
         optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
     elif args.opt1 == "adamw_sn":
         from adamw_sn import AdamWSN
-        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10)
+        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10)
     else:
         raise NotImplementedError
 
