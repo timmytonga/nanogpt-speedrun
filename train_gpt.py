@@ -780,6 +780,17 @@ if __name__ == "__main__":
             del val_loader
             if distributed_mode:
                 dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
+            
+            # Check for NaN in validation loss
+            if torch.isnan(val_loss):
+                print0("Validation loss is NaN. Stopping training.", console=True)
+                if args.wandb and master_process:
+                    wandb.log({"stopped_due_to_nan": True, "step": step})
+                    wandb.finish()
+                if distributed_mode:
+                    dist.destroy_process_group()
+                sys.exit(1)
+                
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/max(step, 1):.2f}ms", console=True)
             if args.wandb and master_process:
                 wandb.log({
@@ -809,6 +820,17 @@ if __name__ == "__main__":
             inputs, targets = next(train_loader)
             loss = model(inputs, targets, get_window_size_blocks(step))
             loss = loss / gradient_accumulation_steps
+            
+            # Check for NaN in training loss
+            if torch.isnan(loss):
+                print0("Training loss is NaN. Stopping training.", console=True)
+                if args.wandb and master_process:
+                    wandb.log({"stopped_due_to_nan": True, "step": step})
+                    wandb.finish()
+                if distributed_mode:
+                    dist.destroy_process_group()
+                sys.exit(1)
+                
             avg_loss += loss.item()
             loss.backward()
         if distributed_mode:
