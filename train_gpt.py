@@ -585,7 +585,7 @@ if __name__ == "__main__":
             if args.opt1_lr_scales == 1.0:
                 opt1_str += f"hlr{args.head_lr}elr{args.embed_lr}slr{args.scalar_lr}:"
             else:
-                opt1_str += f"lrs{args.opt1_lr_scales}"
+                opt1_str += f"lrs{args.opt1_lr_scales:.3f}"
             
         else:
             opt1_str = ""
