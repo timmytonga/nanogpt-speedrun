@@ -518,6 +518,8 @@ class Hyperparameters:
     # adamw_snsm args
     rank: int = 256
     update_proj_gap: int = 200
+    # adamw_sng args
+    subset_size: int = -2
     
     
 
@@ -578,10 +580,13 @@ if __name__ == "__main__":
         # Create base run name from optimizer and learning rate
         if args.opt1 != "adam":
             opt1_str = f"opt1{args.opt1}" 
-            if args.opt1_lr_scales == 1:
+            if args.subset_size != -2:
+                opt1_str += f"{args.subset_size}"
+            if args.opt1_lr_scales == 1.0:
                 opt1_str += f"hlr{args.head_lr}elr{args.embed_lr}slr{args.scalar_lr}:"
             else:
                 opt1_str += f"lrs{args.opt1_lr_scales}"
+            
         else:
             opt1_str = ""
         optstr = f"{opt1_str}{args.optimizer}"
@@ -655,6 +660,9 @@ if __name__ == "__main__":
     elif args.opt1 == "adamw_sn":
         from adamw_sn import AdamWSN
         optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10)
+    elif args.opt1 == "adamw_sng":
+        from adamw_sng import AdamWSN
+        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10, subset_size=args.subset_size)
     else:
         raise NotImplementedError
 
