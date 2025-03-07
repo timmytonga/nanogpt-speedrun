@@ -137,6 +137,7 @@ class AdamWSN(Optimizer):
 
                 # Bias correction and step size
                 step_size = group["lr"]
+                # no bias correction for adagrad.
                 if group["correct_bias"] and beta2 < 1: 
                     bias_correction1 = 1.0 - beta1 ** state["step"]
                     bias_correction2 = 1.0 - beta2 ** state["step"]
