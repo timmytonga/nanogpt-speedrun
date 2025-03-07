@@ -509,6 +509,7 @@ class Hyperparameters:
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
     beta1: float = 0.9  # momentum 
     beta2: float = 0.95  
+    eps: float = 1e-6
     use_momentum_sched: bool = False 
     muon_momentum_warmup: bool = True     
     single_gpu: bool = True
@@ -655,7 +656,7 @@ if __name__ == "__main__":
     if args.head_opt == "adamw_snsm":
         from adamw_snsm import AdamwSNSM
         head_opt = AdamwSNSM(head_params, lr=args.head_lr*args.opt1_lr_scales, 
-                             betas=(args.beta1, args.beta2), eps=1e-6,
+                             betas=(args.beta1, args.beta2), eps=args.eps,
                             rank=args.rank, update_proj_gap=args.update_proj_gap)
     elif args.head_opt == "adam":
         # adam params
