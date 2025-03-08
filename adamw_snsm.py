@@ -47,6 +47,9 @@ class AdamwSNSM(Optimizer):
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
+        for group in self.param_groups:  
+            if "subset_norm" not in group:
+                group["subset_norm"] = False
 
     @torch.no_grad()
     def step(self, closure: Callable = None):
@@ -72,9 +75,9 @@ class AdamwSNSM(Optimizer):
                     state["step"] = 0
 
                 # subset-norm for compressing adaptive step size second moment term
-                if "subset_norm" in group and "reduce_dim" not in state:
+                if group["subset_norm"] and "reduce_dim" not in state:
                     state["reduce_dim"] = 0 if grad.shape[0] >= grad.shape[1] else 1
-                if "subset_norm" in group:  # this means we are reducing the row
+                if group["subset_norm"]:  # this means we are reducing the row
                     norm_dim = 1 - state["reduce_dim"]
                     update_grad = torch.sum(grad**2, dim=norm_dim, keepdim=True)
                 else:

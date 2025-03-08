@@ -502,9 +502,11 @@ class Hyperparameters:
     embed_lr: float = 0.6  # just for the embed params
     scalar_lr: float = 0.04  # just for scalar
     opt1_lr_scales: float = 1.0  # scales all default adam params lr up by some factor. Useful for adamwsn
+    # control sn
+    embed_sn: bool = False 
+    scalar_sn: bool = False 
     
     opt1: str = "adam"  # choices = ['adam', 'adamw_sn']
-    train_head_on_opt2: bool = False  # set this to True to train head on opt2
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
     beta1: float = 0.9  # momentum 
     beta2: float = 0.95  
@@ -589,8 +591,14 @@ if __name__ == "__main__":
                 opt1_str += f"lrs{args.opt1_lr_scales:.3f}"
         else:
             opt1_str = ""
-                        
+            
+        if args.embed_sn:
+            opt1_str += "embsn"
+        if args.scalar_sn:
+            opt1_str += "sclsn"
+            
         optstr = f"{opt1_str}{args.optimizer}"
+
             
         if args.optimizer == "adamw_snsm":
             optstr += f"r{args.rank}g{args.update_proj_gap}"
@@ -646,8 +654,8 @@ if __name__ == "__main__":
     scalar_params = [p for p in model.parameters() if p.ndim < 2]
     head_params = [model.lm_head.weight]
     adam_params = [dict(params=head_params, lr=args.head_lr*args.opt1_lr_scales, rank=args.rank, update_proj_gap=args.update_proj_gap, subset_norm=True),
-                    dict(params=embed_params, lr=args.embed_lr*args.opt1_lr_scales),  # default is 0.6 
-                    dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales)]  # default is 0.04 for adam
+                    dict(params=embed_params, lr=args.embed_lr*args.opt1_lr_scales, subset_norm=args.embed_sn),  
+                    dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales, subset_norm=args.scalar_sn)] 
     
     # init the optimizer(s)
     if args.opt1 == "adam":
