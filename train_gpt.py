@@ -498,6 +498,7 @@ class Hyperparameters:
     wandb: bool = False
     # optimizer setup
     lr: float = 0.05  # this is the default for muon 
+    head_opt: str = "adam"  # choices = ['adam', 'adamw_snsm']
     head_lr: float = 0.22  # this lr is just for the head
     embed_lr: float = 0.6  # just for the embed params
     scalar_lr: float = 0.04  # just for scalar
@@ -592,10 +593,9 @@ if __name__ == "__main__":
         else:
             opt1_str = ""
             
-        if args.embed_sn:
-            opt1_str += "embsn"
-        if args.scalar_sn:
-            opt1_str += "sclsn"
+        if args.head_opt == "adamw_snsm":
+            opt1_str += f"HOsnsmlr{args.head_lr}"
+            opt1_str += f"r{args.rank}g{args.update_proj_gap}"
             
         optstr = f"{opt1_str}{args.optimizer}"
 
@@ -619,9 +619,9 @@ if __name__ == "__main__":
         if args.use_momentum_sched:
             run_name += "msched"
         
-        wandb.init(project="nanogpt-speedrun", name=run_name)
+        wandb.init(project="nanogpt-speedrun2", name=run_name)
         wandb.config.update(args)  # This tracks your hyperparameters
-        
+                
     # begin by printing this file (the Python code)
     print0(code)
     print0("="*100)
@@ -653,18 +653,32 @@ if __name__ == "__main__":
     embed_params = [p for n, p in model.named_parameters() if "embed" in n]
     scalar_params = [p for p in model.parameters() if p.ndim < 2]
     head_params = [model.lm_head.weight]
-    adam_params = [dict(params=head_params, lr=args.head_lr*args.opt1_lr_scales, rank=args.rank, update_proj_gap=args.update_proj_gap, subset_norm=True),
-                    dict(params=embed_params, lr=args.embed_lr*args.opt1_lr_scales, subset_norm=args.embed_sn),  
-                    dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales, subset_norm=args.scalar_sn)] 
+    adam_params = [dict(params=embed_params, lr=args.embed_lr*args.opt1_lr_scales),  # default is 0.6 
+                    dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales)]  # default is 0.04 for adam
+    if args.head_opt == "adamw_snsm":
+        from adamw_snsm import AdamwSNSM
+        head_opt = AdamwSNSM(head_params, lr=args.head_lr*args.opt1_lr_scales, 
+                             betas=(args.beta1, args.beta2), eps=args.eps,
+                            rank=args.rank, update_proj_gap=args.update_proj_gap)
+    elif args.head_opt == "adam":
+        # adam params
+        adam_params.append(
+            dict(params=head_params, lr=args.head_lr*args.opt1_lr_scales)  # default for head_lr is .22
+        )
+    else:
+        raise NotImplementedError
     
     # init the optimizer(s)
     if args.opt1 == "adam":
         # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
         # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
         optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
-    elif args.opt1 == "adamw_snsm":
-        from adamw_snsm import AdamwSNSM
-        optimizer1 = AdamwSNSM(adam_params,  betas=(args.beta1, args.beta2))
+    elif args.opt1 == "adamw_sn":
+        from adamw_sn import AdamWSN
+        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10)
+    elif args.opt1 == "adamw_sng":
+        from adamw_sng import AdamWSN
+        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10, subset_size=args.subset_size)
     else:
         raise NotImplementedError
 
@@ -686,7 +700,9 @@ if __name__ == "__main__":
         raise NotImplementedError
 
     optimizers = [optimizer1, optimizer2]
-    
+    if args.head_opt == "adamw_snsm":
+        optimizers.append(head_opt)
+            
     print("finish constructing optimizers. printing info:")
     for opt in optimizers:
         print(opt)
