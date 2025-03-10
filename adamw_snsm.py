@@ -53,7 +53,7 @@ class AdamwSNSM(Optimizer):
         self.proj_type= proj_type
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
-        print(f"DEBUG: betas {betas}")
+        print(f"DEBUG: lr {lr} wd {weight_decay} betas {betas} rank {rank} gap {update_proj_gap} eps {eps}")
 
     @torch.no_grad()
     def step(self, closure: Callable = None):

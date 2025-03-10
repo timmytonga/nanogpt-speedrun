@@ -501,6 +501,7 @@ class Hyperparameters:
     lr: float = 0.05  # this is the default for muon 
     head_opt: str = "adam"  # choices = ['adam', 'adamw_snsm']
     head_lr: float = 0.22  # this lr is just for the head
+    head_wd: float = 0.0
     embed_lr: float = 0.6  # just for the embed params
     scalar_lr: float = 0.04  # just for scalar
     opt1_lr_scales: float = 1.0  # scales all default adam params lr up by some factor. Useful for adamwsn
@@ -596,6 +597,7 @@ if __name__ == "__main__":
             
         if args.head_opt == "adamw_snsm":
             opt1_str += f"HOsnsmlr{args.head_lr}"
+            opt1_str += f"wd{args.head_wd}" if args.head_wd > 0 else ""
             opt1_str += f"r{args.rank}g{args.update_proj_gap}"
             
         optstr = f"{opt1_str}{args.optimizer}"
@@ -660,7 +662,7 @@ if __name__ == "__main__":
         from adamw_snsm import AdamwSNSM
         head_opt = AdamwSNSM(head_params, lr=args.head_lr*args.opt1_lr_scales, 
                              betas=(args.beta1, args.beta2), eps=args.eps,
-                            rank=args.rank, update_proj_gap=args.update_proj_gap)
+                            rank=args.rank, update_proj_gap=args.update_proj_gap, weight_decay=args.head_wd)
     elif args.head_opt == "adam":
         # adam params
         adam_params.append(

@@ -56,7 +56,7 @@ class AdamwSNSM(Optimizer):
             params: Iterable,
             lr: float = 1e-3,
             betas: Tuple[float, float] = (0.9, 0.999),
-            eps: float = 1e-6,
+            eps: float = 1e-10,
             weight_decay: float = 0.0,
             correct_bias: bool = True,
             rank: int = 256,
@@ -76,7 +76,7 @@ class AdamwSNSM(Optimizer):
         self.proj_type= proj_type
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
-        print(f"DEBUG: betas {betas}")
+        print(f"DEBUG: lr {lr} wd {weight_decay} betas {betas} rank {rank} gap {update_proj_gap} eps {eps}")
 
     @torch.no_grad()
     def step(self, closure: Callable = None):
