@@ -611,7 +611,9 @@ if __name__ == "__main__":
             sched_str += f"{args.warmup}" if args.warmup > 0 else ""
             sched_str += f"to{args.final_rate}"
         else:
-            sched_str = ""
+            sched_str = f"cdfrc{args.cooldown_frac}" if args.cooldown_frac != 0.4 else ""
+        
+        
         run_name = f"{optstr}-{sched_str}lr{args.lr}"
         
         # Add non-default parameters to run name
