@@ -550,10 +550,9 @@ if __name__ == "__main__":
     desired_world_size = 8
     world_size_factor = desired_world_size // world_size
     original_seq_len = args.train_seq_len
-    seq_len_scale: int = int(os.environ.get("SEQ_LEN_SCALE", "1"))  # increase length for more GPUs
 
-    args.train_seq_len = 32 * 1024 * seq_len_scale
-    args.val_seq_len = 32 * 1024 * seq_len_scale
+    args.train_seq_len = 32 * 1024 
+    args.val_seq_len = 32 * 1024 
     gradient_accumulation_steps = (original_seq_len * world_size_factor) // args.train_seq_len
 
     assert torch.cuda.is_available()
