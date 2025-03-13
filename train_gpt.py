@@ -487,7 +487,7 @@ class Hyperparameters:
     val_tokens: int = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
     train_seq_len: int = 48*1024 # FlexAttention sequence length
     val_seq_len: int = 4*64*1024 # FlexAttention sequence length for validation
-    seq_len_scale: int = 1  # increase length for more GPUs
+    seq_len_scale: int = int(os.environ.get("SEQ_LEN_SCALE", "1"))  # increase length for more GPUs
     # optimization
     num_iterations: int = 2000 # number of iterations to run
     cooldown_frac: float = 0.4 # fraction of training spent cooling down the learning rate
@@ -550,8 +550,10 @@ if __name__ == "__main__":
     desired_world_size = 8
     world_size_factor = desired_world_size // world_size
     original_seq_len = args.train_seq_len
-    args.train_seq_len = 32 * 1024 * args.seq_len_scale
-    args.val_seq_len = 32 * 1024 * args.seq_len_scale
+    seq_len_scale: int = int(os.environ.get("SEQ_LEN_SCALE", "1"))  # increase length for more GPUs
+
+    args.train_seq_len = 32 * 1024 * seq_len_scale
+    args.val_seq_len = 32 * 1024 * seq_len_scale
     gradient_accumulation_steps = (original_seq_len * world_size_factor) // args.train_seq_len
 
     assert torch.cuda.is_available()
