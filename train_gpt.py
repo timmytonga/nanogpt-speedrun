@@ -663,13 +663,13 @@ if __name__ == "__main__":
                     dict(params=scalar_params, lr=args.scalar_lr*args.opt1_lr_scales)]  # default is 0.04 for adam
     if args.head_opt == "adamw_snsm":
         from adamw_snsm import AdamwSNSM
-        head_opt = AdamwSNSM(head_params, lr=args.head_lr*args.opt1_lr_scales, 
+        head_opt = AdamwSNSM(head_params, lr=args.head_lr, 
                              betas=(args.beta1, args.beta2), eps=args.eps,
                             rank=args.rank, update_proj_gap=args.update_proj_gap, weight_decay=args.head_wd)
     elif args.head_opt == "adam":
         # adam params
         adam_params.append(
-            dict(params=head_params, lr=args.head_lr*args.opt1_lr_scales)  # default for head_lr is .22
+            dict(params=head_params, lr=args.head_lr)  # default for head_lr is .22
         )
     else:
         raise NotImplementedError
@@ -681,10 +681,10 @@ if __name__ == "__main__":
         optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
     elif args.opt1 == "adamw_sn":
         from adamw_sn import AdamWSN
-        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10)
+        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10)
     elif args.opt1 == "adamw_sng":
         from adamw_sng import AdamWSN
-        optimizer1 = AdamWSN(adam_params, betas=(args.beta1, args.beta2), eps=1e-10, subset_size=args.subset_size)
+        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10, subset_size=args.subset_size)
     else:
         raise NotImplementedError
 
