@@ -513,7 +513,7 @@ class Hyperparameters:
     optimizer: str = "muon"  # choices = ['muon', 'adamw_sn', 'adamw_snsm']
     beta1: float = 0.9  # momentum 
     beta2: float = 0.95  
-    eps: float = 1e-6
+    eps: float = 1e-10
     use_momentum_sched: bool = False 
     muon_momentum_warmup: bool = True     
     single_gpu: bool = True
@@ -681,7 +681,7 @@ if __name__ == "__main__":
         optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
     elif args.opt1 == "adamw_sn":
         from adamw_sn import AdamWSN
-        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10)
+        optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=args.eps)
     elif args.opt1 == "adamw_sng":
         from adamw_sng import AdamWSN
         optimizer1 = AdamWSN(adam_params, betas=(0.8, 0.95), eps=1e-10, subset_size=args.subset_size)
