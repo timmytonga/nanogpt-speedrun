@@ -56,7 +56,7 @@ class AdamwSNSM(Optimizer):
             params: Iterable,
             lr: float = 1e-3,
             betas: Tuple[float, float] = (0.9, 0.95),
-            eps: float = 1e-10,
+            eps: float = 1e-13,
             weight_decay: float = 0.0,
             correct_bias: bool = True,
             rank: int = 256,
@@ -745,7 +745,7 @@ adam_params = [dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
 optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
 # sm = subspace momentum -- only performs momentum on specified subspace. sn = subset-norm -- share step size. reduces flops for small ranks.
-head_opt = AdamwSNSM(head_params, lr=0.22*10, betas=(0.9, 0.95), eps=1e-10, rank=128, update_proj_gap=2000)
+head_opt = AdamwSNSM(head_params, lr=0.22*10, betas=(0.9, 0.95), eps=1e-14, rank=128, update_proj_gap=2000)
 optimizer2 = Muon(hidden_matrix_params, lr=0.05, momentum=0.95, rank=rank, world_size=world_size)
 optimizers = [optimizer1, optimizer2, head_opt]
 for opt in optimizers:
